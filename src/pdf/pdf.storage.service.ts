@@ -1,7 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import {
+    mkdir,
+    readdir,
+    rm,
+    stat,
+    unlink
+} from 'fs/promises';
+import { join } from 'path';
 
 @Injectable()
 export class StorageService {
@@ -15,23 +21,23 @@ export class StorageService {
         this.baseDir = baseDirektory;
 
         // Pastikan base dir ada
-        fs.mkdir(this.baseDir, { recursive: true }).catch(() => { });
+        mkdir(this.baseDir, { recursive: true }).catch(() => { });
     }
 
     async createJobDir(jobId: string): Promise<string> {
-        const dir = path.join(this.baseDir, jobId);
-        await fs.mkdir(dir, { recursive: true });
+        const dir = join(this.baseDir, jobId);
+        await mkdir(dir, { recursive: true });
         return dir;
     }
 
     async cleanup(dir: string): Promise<void> {
-        await fs.rm(dir, { recursive: true, force: true }).catch((err) => {
+        await rm(dir, { recursive: true, force: true }).catch((err) => {
             this.logger.warn(`Cleanup failed for ${dir}: ${err.message}`);
         });
     }
 
     async deleteFile(filePath: string): Promise<void> {
-        await fs.unlink(filePath).catch(() => { });
+        await unlink(filePath).catch(() => { });
     }
 
     /**
@@ -45,14 +51,14 @@ export class StorageService {
         let entries: string[];
 
         try {
-            entries = await fs.readdir(this.baseDir);
+            entries = await readdir(this.baseDir);
         } catch { return; }
 
         for (const entry of entries) {
-            const dir = path.join(this.baseDir, entry);
-            const stat = await fs.stat(dir).catch(() => null);
-            if (!stat) continue;
-            if (now - stat.birthtimeMs > ttl) {
+            const dir = join(this.baseDir, entry);
+            const statResult = await stat(dir).catch(() => null);
+            if (!statResult) continue;
+            if (now - statResult.birthtimeMs > ttl) {
                 await this.cleanup(dir);
                 this.logger.log(`Purged expired job dir: ${entry}`);
             }
