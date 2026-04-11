@@ -4,11 +4,10 @@ import {
     ExceptionFilter,
     Catch,
     ArgumentsHost,
-    HttpException,
-    HttpStatus,
     Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { getHttpError } from '../utils/error.util';
 
 @Catch() // Menangkap SEMUA jenis exception
 export class GlobalExceptionFilter implements ExceptionFilter {
@@ -19,36 +18,19 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         const response = ctx.getResponse<Response>();
         const request = ctx.getRequest<Request>();
 
-        // ── 1. Tentukan HTTP status ──────────────────────────────
-        const status =
-            exception instanceof HttpException
-                ? exception.getStatus()
-                : HttpStatus.INTERNAL_SERVER_ERROR;
+        // ✅ Satu baris — semua info sudah tersedia
+        const { statusCode, message, stack } = getHttpError(exception);
 
-        // ── 2. Ambil pesan error ─────────────────────────────────
-        let message: string | object = 'Internal server error';
-
-        if (exception instanceof HttpException) {
-            const res = exception.getResponse();
-            message = typeof res === 'string' ? res : (res as any).message ?? res;
-        }
-
-        // ── 3. Logging (jangan log 4xx terlalu noisy, fokus 5xx) ─
-        if (status >= 500) {
-            this.logger.error(
-                `[${request.method}] ${request.url} → ${status}`,
-                exception instanceof Error ? exception.stack : String(exception),
-            );
+        if (statusCode >= 500) {
+            this.logger.error(`[${request.method}] ${request.url}`, stack);
         } else {
-            this.logger.warn(
-                `[${request.method}] ${request.url} → ${status} | ${JSON.stringify(message)}`,
-            );
+            this.logger.warn(`[${request.method}] ${request.url} → ${statusCode}`);
         }
 
-        // ── 4. Response terstandarisasi ──────────────────────────
-        response.status(status).json({
+        // ── Response terstandarisasi ──────────────────────────
+        response.status(statusCode).json({
             success: false,
-            statusCode: status,
+            statusCode,
             message,
             path: request.url,
             timestamp: new Date().toISOString(),
