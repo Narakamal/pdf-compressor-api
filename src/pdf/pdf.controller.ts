@@ -7,6 +7,11 @@ import { UpdatePdfDto } from './dto/update-pdf.dto';
 export class PdfController {
   constructor(private readonly pdfService: PdfService) { }
 
+  @Post('/compress')
+  createCompressed() {
+    return 'this.pdfService.create(createPdfDto);'
+  }
+
   @Post()
   create(@Body() createPdfDto: CreatePdfDto) {
     return 'this.pdfService.create(createPdfDto);'
