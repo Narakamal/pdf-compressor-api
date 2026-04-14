@@ -24,11 +24,30 @@ export function hasBombSignature(buffer: Buffer): boolean {
 /**
  * Generate signed download token — hanya pemilik job yang bisa download
  */
-export function generateDownloadToken(jobId: string, secret: string): string {
+export function generateDownloadToken(
+    jobId: string,
+    secret: string
+): string {
     return createHmac('sha256', secret).update(jobId).digest('hex');
 }
 
-export function verifyDownloadToken(jobId: string, token: string, secret: string): boolean {
+function isValidHex(str: string) {
+    return /^[0-9a-fA-F]+$/.test(str);
+}
+
+export function verifyDownloadToken(
+    jobId: string,
+    token: string,
+    secret: string,
+): boolean {
     const expected = generateDownloadToken(jobId, secret);
-    return timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(expected, 'hex'));
+
+    if (!isValidHex(token) || token.length !== expected.length) {
+        return false;
+    }
+
+    return timingSafeEqual(
+        Buffer.from(token, 'hex'),
+        Buffer.from(expected, 'hex'),
+    );
 }

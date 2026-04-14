@@ -3,7 +3,7 @@ import {
     UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, createHash, timingSafeEqual } from 'crypto';
 
 /**
  * HMAC-SHA256 Guard
@@ -33,8 +33,12 @@ export class HmacGuard implements CanActivate {
         if (diff > 5 * 60 * 1000) throw new UnauthorizedException('Request expired');
 
         // Buat payload yang akan di-sign
-        const bodyHash = createHmac('sha256', secret)
-            .update(JSON.stringify(req.body ?? ''))
+        const rawBody = req.body && Object.keys(req.body).length
+            ? JSON.stringify(req.body)
+            : '';
+
+        const bodyHash = createHash('sha256')
+            .update(rawBody)
             .digest('hex');
 
         const payload = [req.method, req.path, timestamp, bodyHash].join('\n');

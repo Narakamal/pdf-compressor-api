@@ -1,22 +1,36 @@
-export default {
+import type { Config } from 'jest';
+
+const config: Config = {
     moduleFileExtensions: ['js', 'json', 'ts'],
-    rootDir: 'src',
-    testRegex: '.*\\.spec\\.ts$',
-    transform: { '^.+\\.(t|j)s$': 'ts-jest' },
-    collectCoverageFrom: ['**/*.(t|j)s'],
-    coverageDirectory: '../coverage',
+    rootDir: '.',
     testEnvironment: 'node',
 
-    // Pisah unit test dan e2e
-    projects: [
-        {
-            displayName: 'unit',
-            testMatch: ['<rootDir>/**/*.spec.ts'],
-            testPathIgnorePatterns: ['e2e'],
-        },
-        {
-            displayName: 'e2e',
-            testMatch: ['<rootDir>/**/*.e2e-spec.ts'],
-        },
+    // Transformasi TypeScript menggunakan ts-jest
+    transform: {
+        '^.+\\.(t|j)s$': ['ts-jest', {
+            tsconfig: 'tsconfig.json',
+        }],
+    },
+
+    // Pola file test — cari semua *.spec.ts kecuali folder e2e
+    testMatch: [
+        '<rootDir>/src/**/*.spec.ts',
     ],
+
+    // Alias path jika kamu pakai @ imports di tsconfig
+    moduleNameMapper: {
+        '^src/(.*)$': '<rootDir>/src/$1',
+    },
+
+    // Coverage
+    collectCoverageFrom: [
+        'src/**/*.ts',
+        '!src/**/*.spec.ts',
+        '!src/**/*.e2e-spec.ts',
+        '!src/main.ts',
+    ],
+    coverageDirectory: 'coverage',
+    coverageReporters: ['text', 'lcov', 'html'],
 };
+
+export default config;
