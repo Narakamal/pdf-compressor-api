@@ -145,7 +145,7 @@ export class GhostscriptService implements OnApplicationBootstrap {
 
             // Graceful fallback: copy as-is
             this.logger.warn(
-                'GS tidak tersedia – file di-copy tanpa kompresi.',
+                'GS tidak tersedia - file di-copy tanpa kompresi.',
             );
             copyFileSync(inputPath, outputPath);
             onProgress?.(100);

@@ -44,7 +44,8 @@ export class PdfProcessor extends WorkerHost {
             } as any;
 
         } catch (err) {
-            this.logger.error(`Job ${jobId} failed: ${err.message}`);
+            const message = getErrorMessage(err);
+            this.logger.error(`Job ${jobId} failed: ${message}`);
 
             // Cleanup input jika gagal total (setelah semua retry)
             // ✅ Safe: fallback ke 1 jika attempts tidak didefinisikan

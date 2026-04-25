@@ -12,15 +12,23 @@ const config: Config = {
         }],
     },
 
+    // ✅ Fix: uuid v9+ dan beberapa package lain ship ESM-only di dist-node.
+    // Petakan ke build CJS agar Jest (CommonJS) bisa require() mereka.
+    moduleNameMapper: {
+        '^uuid$': '<rootDir>/node_modules/uuid/dist/cjs/index.js',
+        '^src/(.*)$': '<rootDir>/src/$1',
+    },
+
+    // ✅ Fix: Jangan ignore transformasi untuk package ESM berikut.
+    // Default Jest mengabaikan semua node_modules — override untuk uuid & bullmq.
+    transformIgnorePatterns: [
+        '/node_modules/(?!(uuid|bullmq|@nestjs/bullmq)/)',
+    ],
+
     // Pola file test — cari semua *.spec.ts kecuali folder e2e
     testMatch: [
         '<rootDir>/src/**/*.spec.ts',
     ],
-
-    // Alias path jika kamu pakai @ imports di tsconfig
-    moduleNameMapper: {
-        '^src/(.*)$': '<rootDir>/src/$1',
-    },
 
     // Coverage
     collectCoverageFrom: [
