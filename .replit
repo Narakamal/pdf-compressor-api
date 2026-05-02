@@ -42,3 +42,11 @@ externalPort = 80
 deploymentTarget = "vm"
 run = ["bash", "start.sh"]
 build = ["npm", "run", "build"]
+
+[userenv]
+
+[userenv.shared]
+REDIS_HOST = "redis-18680.c322.us-east-1-2.ec2.cloud.redislabs.com"
+REDIS_PORT = "18680"
+AUTH_MODE = "basic"
+TEMP_DIR = "/tmp/pdf-jobs"
