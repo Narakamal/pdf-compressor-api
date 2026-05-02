@@ -13,14 +13,14 @@ export interface CompressResult {
     sizeBefore: number;
     sizeAfter: number;
     ratio: number;
-    skipped?: boolean;      // true jika GS tidak tersedia, file dicopy saja
+    skipped?: boolean;
     skipReason?: string;
 }
 
 export class GhostscriptNotInstalledError extends Error {
     constructor() {
         super(
-            'Ghostscript tidak terinstal. ' +
+            'Ghostscript is not installed on this server. ' +
             'Windows: choco install ghostscript  |  Ubuntu: sudo apt install ghostscript',
         );
         this.name = 'GhostscriptNotInstalledError';
@@ -31,15 +31,19 @@ export class GhostscriptNotInstalledError extends Error {
 export class GhostscriptService implements OnApplicationBootstrap {
     private readonly logger = new Logger(GhostscriptService.name);
 
-    // Cache hasil deteksi — tidak perlu cek ulang tiap request
     private gsBinary: string | null = null;
     private gsChecked = false;
 
-    /**
-     * Dipanggil otomatis NestJS setelah semua module terinisialisasi
-     */
     async onApplicationBootstrap(): Promise<void> {
         await this.detectGs();
+    }
+
+    /**
+     * True jika Ghostscript tersedia di sistem — cached setelah startup.
+     * Digunakan oleh PdfService untuk early-rejection sebelum enqueue.
+     */
+    isAvailable(): boolean {
+        return this.gsChecked && this.gsBinary !== null;
     }
 
     private async detectGs(): Promise<void> {
@@ -55,86 +59,61 @@ export class GhostscriptService implements OnApplicationBootstrap {
         } catch {
             this.gsBinary = null;
             this.gsChecked = true;
-            // Warn, bukan error — supaya app tetap bisa start
             this.logger.warn(
-                '⚠️  Ghostscript tidak ditemukan saat startup. ' +
-                'Fitur kompresi PDF tidak tersedia. ' +
+                '⚠️  Ghostscript not found. PDF compression unavailable. ' +
                 'Windows: choco install ghostscript | Ubuntu: sudo apt install ghostscript'
             );
         }
     }
 
-    /**
-     * Resolve binary GS sesuai OS.
-     * Windows → cari di lokasi default Ghostscript installer (Program Files)
-     * Linux   → 'gs' (dari PATH)
-     */
     private resolveGsBinary(): string {
         if (platform() === 'win32') {
-            // Ghostscript di Windows biasanya install ke folder bernama versi
-            // Coba beberapa path umum; fallback ke 'gswin64c' jika ada di PATH
             const candidates = [
                 'C:\\Program Files\\gs\\gs10.04.0\\bin\\gswin64c.exe',
                 'C:\\Program Files\\gs\\gs10.03.1\\bin\\gswin64c.exe',
                 'C:\\Program Files\\gs\\gs10.02.1\\bin\\gswin64c.exe',
                 'C:\\Program Files (x86)\\gs\\gs10.04.0\\bin\\gswin32c.exe',
-                'gswin64c',   // jika sudah ada di PATH Windows
+                'gswin64c',
             ];
-
             for (const c of candidates) {
                 try {
-                    // statSync hanya valid untuk path absolut
                     if (c.includes('\\')) statSync(c);
                     return c;
                 } catch {
-                    // lanjut ke kandidat berikutnya
+                    // next candidate
                 }
             }
-            return 'gswin64c';   // last-resort, biarkan OS lempar error
+            return 'gswin64c';
         }
-
-        return 'gs';   // Linux / macOS
+        return 'gs';
     }
 
-    /**
-     * Cek apakah Ghostscript tersedia di sistem.
-     * Mengembalikan path binary jika ada, null jika tidak ada.
-     */
     async checkGsAvailable(): Promise<string | null> {
         const binary = this.resolveGsBinary();
-
         try {
-            const cmd =
-                platform() === 'win32'
-                    ? `"${binary}" --version`
-                    : `${binary} --version`;
-
+            const cmd = platform() === 'win32'
+                ? `"${binary}" --version`
+                : `${binary} --version`;
             const { stdout } = await execAsync(cmd, { timeout: 5_000 });
-            const version = stdout.trim();
-            this.logger.log(`Ghostscript tersedia: v${version} (${binary})`);
+            this.logger.log(`Ghostscript available: v${stdout.trim()} (${binary})`);
             return binary;
         } catch {
-            this.logger.warn(
-                `Ghostscript tidak ditemukan (binary: ${binary}). ` +
-                'Kompresi PDF akan dilewati.',
-            );
+            this.logger.warn(`Ghostscript not found (binary: ${binary}).`);
             return null;
         }
     }
 
     /**
      * Compress PDF.
-     *
-     * @param strict  true  → lempar GhostscriptNotInstalledError jika GS tidak ada
-     *                false → copy file tanpa kompresi, kembalikan skipped:true
+     * @param strict  true  → throw GhostscriptNotInstalledError jika GS tidak ada
+     *                false → copy file tanpa kompresi (graceful fallback)
      */
     async compress(
         inputPath: string,
         outputDir: string,
         onProgress?: (pct: number) => void,
-        strict = false,
+        strict = true,
     ): Promise<CompressResult> {
-        // Gunakan cache — tidak spawn process baru tiap request
         if (!this.gsChecked) await this.detectGs();
 
         const sizeBefore = statSync(inputPath).size;
@@ -143,25 +122,21 @@ export class GhostscriptService implements OnApplicationBootstrap {
         if (!this.gsBinary) {
             if (strict) throw new GhostscriptNotInstalledError();
 
-            // Graceful fallback: copy as-is
-            this.logger.warn(
-                'GS tidak tersedia - file di-copy tanpa kompresi.',
-            );
+            // Graceful fallback (hanya jika strict=false dipanggil eksplisit)
+            this.logger.warn('GS not available — copying file as-is.');
             copyFileSync(inputPath, outputPath);
             onProgress?.(100);
-
             return {
                 outputPath,
                 sizeBefore,
                 sizeAfter: sizeBefore,
                 ratio: 0,
                 skipped: true,
-                skipReason: 'Ghostscript tidak terinstal di server ini.',
+                skipReason: 'Ghostscript is not installed on this server.',
             };
         }
 
         await this.runGs(this.gsBinary, inputPath, outputPath, onProgress);
-
         const sizeAfter = statSync(outputPath).size;
 
         return {
@@ -196,7 +171,6 @@ export class GhostscriptService implements OnApplicationBootstrap {
             const gs = spawn(binary, args, {
                 timeout: 120_000,
                 killSignal: 'SIGKILL',
-                // Windows butuh shell:true jika binary dari PATH tidak resolve
                 shell: platform() === 'win32',
             });
 
@@ -216,14 +190,11 @@ export class GhostscriptService implements OnApplicationBootstrap {
                     onProgress?.(100);
                     resolve();
                 } else {
-                    reject(
-                        new Error(`Ghostscript exit code ${code}: ${stderr}`),
-                    );
+                    reject(new Error(`Ghostscript exit code ${code}: ${stderr}`));
                 }
             });
 
             gs.on('error', (err: NodeJS.ErrnoException) => {
-                // ENOENT = binary tidak ketemu (race condition / salah path)
                 if (err.code === 'ENOENT') {
                     reject(new GhostscriptNotInstalledError());
                 } else {

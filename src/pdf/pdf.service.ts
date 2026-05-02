@@ -2,12 +2,14 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
-  UnauthorizedException
+  UnauthorizedException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { PDF_QUEUE, PdfJobData } from './pdf.processor.service';
 import { StorageService } from './pdf.storage.service';
+import { GhostscriptService } from './ghostscript.service';
 import { generateDownloadToken, verifyDownloadToken } from '../common/utils/file.util';
 import { Queue } from 'bullmq';
 import { v4 as uuid } from 'uuid';
@@ -20,17 +22,25 @@ export class PdfService {
     @InjectQueue(PDF_QUEUE) private queue: Queue,
     private storage: StorageService,
     private config: ConfigService,
+    private gs: GhostscriptService,
   ) { }
 
   async enqueue(fileBuffer: Buffer, originalName: string) {
-    // ✅ Fail-fast: validasi config SEBELUM ada I/O apapun
+    // ── 1. Fail-fast: Ghostscript harus tersedia sebelum accept job ──
+    if (!this.gs.isAvailable()) {
+      throw new ServiceUnavailableException(
+        'PDF compression is unavailable: Ghostscript is not installed on this server. ' +
+        'Please contact the administrator.',
+      );
+    }
+
+    // ── 2. Validasi config token ──────────────────────────────────────
     const secret = this.config.get<string>('app.downloadTokenSecret');
     if (!secret) throw new UnauthorizedException('Token secret not configured');
 
+    // ── 3. Buat job dir dan simpan file input ─────────────────────────
     const jobId = uuid();
     const tmpDir = await this.storage.createJobDir(jobId);
-
-    // Simpan file input ke temp dir
     const inputPath = join(tmpDir, 'input.pdf');
     await writeFile(inputPath, fileBuffer);
 
@@ -41,6 +51,7 @@ export class PdfService {
       originalName,
     };
 
+    // ── 4. Masukkan ke antrian ────────────────────────────────────────
     await this.queue.add('compress', jobData, {
       jobId,
       attempts: this.config.get('app.queue.maxAttempts'),
@@ -48,7 +59,7 @@ export class PdfService {
         type: 'exponential',
         delay: this.config.get('app.queue.backoffMs'),
       },
-      removeOnComplete: { age: 15 * 60 },  // hapus dari queue setelah 15 menit
+      removeOnComplete: { age: 15 * 60 },
       removeOnFail: { age: 60 * 60 },
     });
 
@@ -65,7 +76,7 @@ export class PdfService {
 
     return {
       jobId,
-      state,         // waiting | active | completed | failed | delayed
+      state,
       progress,
       attempts: job.attemptsMade,
       failedReason: job.failedReason ?? null,
@@ -75,7 +86,6 @@ export class PdfService {
 
   async getDownloadStream(jobId: string, token: string) {
     const secret = this.config.get<string>('app.downloadTokenSecret');
-
     if (!secret) throw new UnauthorizedException('Token secret not configured');
 
     if (!verifyDownloadToken(jobId, token, secret)) {
@@ -88,7 +98,7 @@ export class PdfService {
     }
 
     const outputPath = (job.returnvalue as any).outputPath;
-    await access(outputPath); // pastikan file masih ada
+    await access(outputPath);
     return outputPath;
   }
 }

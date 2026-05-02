@@ -1,4 +1,6 @@
 import { registerAs } from '@nestjs/config';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 export default registerAs('app', () => ({
     basicAuthUser: process.env.BASIC_AUTH_USER,
@@ -9,7 +11,9 @@ export default registerAs('app', () => ({
     file: {
         minBytes: 10 * 1024,          // 10 KB
         maxBytes: 50 * 1024 * 1024,   // 50 MB
-        tempDir: process.env.TEMP_DIR ?? '/tmp/pdf-jobs',
+        // Dev (Windows/Linux): pakai OS temp dir — tidak kotor direktori project
+        // Production: override via TEMP_DIR env var ke path server yang persisten
+        tempDir: process.env.TEMP_DIR ?? join(tmpdir(), 'pdf-jobs'),
         ttlMs: 15 * 60 * 1000,     // 15 menit auto-delete
     },
 

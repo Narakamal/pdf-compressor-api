@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "SI6FicHKETfg8XaikMBgr"
+uri = "file://insomnia-collection.json"
+type = "unspecified"
+title = "Insomnia Collection — PDF Compressor API"

@@ -1,0 +1,123 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-05-02",
+  "__export_source": "pdf-compressor-api",
+  "resources": [
+    {
+      "_id": "wrk_pdf_compressor",
+      "_type": "workspace",
+      "name": "PDF Compressor API",
+      "description": "Koleksi endpoint untuk PDF Compressor API dengan Basic Auth dan HMAC"
+    },
+    {
+      "_id": "env_base",
+      "_type": "environment",
+      "parentId": "wrk_pdf_compressor",
+      "name": "Base Environment",
+      "data": {
+        "base_url": "http://localhost:3000",
+        "basic_user": "YOUR_BASIC_AUTH_USER",
+        "basic_pass": "YOUR_BASIC_AUTH_PASS",
+        "job_id": "",
+        "download_token": ""
+      }
+    },
+    {
+      "_id": "fld_pdf",
+      "_type": "request_group",
+      "parentId": "wrk_pdf_compressor",
+      "name": "PDF Compression"
+    },
+    {
+      "_id": "req_health",
+      "_type": "request",
+      "parentId": "wrk_pdf_compressor",
+      "name": "Health Check",
+      "method": "GET",
+      "url": "{{ _.base_url }}/",
+      "headers": [],
+      "description": "Cek apakah server berjalan. Tidak butuh auth."
+    },
+    {
+      "_id": "req_compress",
+      "_type": "request",
+      "parentId": "fld_pdf",
+      "name": "1. Compress PDF (Basic Auth)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/pdf/compress",
+      "description": "Upload file PDF untuk dikompresi. Gunakan form-data dengan field 'file'. Response berisi jobId dan downloadToken.",
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Basic {{ base64 '{{ _.basic_user }}:{{ _.basic_pass }}' }}",
+          "description": "Basic Auth — encode manual: base64(user:pass)"
+        }
+      ],
+      "authentication": {
+        "type": "basic",
+        "username": "{{ _.basic_user }}",
+        "password": "{{ _.basic_pass }}"
+      },
+      "body": {
+        "mimeType": "multipart/form-data",
+        "params": [
+          {
+            "name": "file",
+            "type": "file",
+            "value": "",
+            "description": "Pilih file PDF Anda (min 10KB, max 50MB)"
+          }
+        ]
+      }
+    },
+    {
+      "_id": "req_status",
+      "_type": "request",
+      "parentId": "fld_pdf",
+      "name": "2. Cek Status Job",
+      "method": "GET",
+      "url": "{{ _.base_url }}/pdf/job/{{ _.job_id }}/status",
+      "description": "Poll status kompresi. State: waiting | active | completed | failed. Isi job_id dari response compress.",
+      "authentication": {
+        "type": "basic",
+        "username": "{{ _.basic_user }}",
+        "password": "{{ _.basic_pass }}"
+      }
+    },
+    {
+      "_id": "req_progress",
+      "_type": "request",
+      "parentId": "fld_pdf",
+      "name": "3. Progress SSE (Real-time)",
+      "method": "GET",
+      "url": "{{ _.base_url }}/pdf/job/{{ _.job_id }}/progress",
+      "description": "Server-Sent Events — stream progress 0-100%. Insomnia akan tampilkan respons streaming.",
+      "authentication": {
+        "type": "basic",
+        "username": "{{ _.basic_user }}",
+        "password": "{{ _.basic_pass }}"
+      },
+      "headers": [
+        {
+          "name": "Accept",
+          "value": "text/event-stream"
+        }
+      ]
+    },
+    {
+      "_id": "req_download",
+      "_type": "request",
+      "parentId": "fld_pdf",
+      "name": "4. Download Hasil Compress",
+      "method": "GET",
+      "url": "{{ _.base_url }}/pdf/job/{{ _.job_id }}/download?token={{ _.download_token }}",
+      "description": "Download PDF hasil kompresi. Butuh job_id dan download_token dari response compress. File akan otomatis terhapus setelah didownload.",
+      "authentication": {
+        "type": "basic",
+        "username": "{{ _.basic_user }}",
+        "password": "{{ _.basic_pass }}"
+      }
+    }
+  ]
+}

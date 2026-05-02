@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PdfService } from './pdf.service';
 import { StorageService } from './pdf.storage.service';
+import { GhostscriptService } from './ghostscript.service';
 import { ConfigService } from '@nestjs/config';
 import { getQueueToken } from '@nestjs/bullmq';
 import { PDF_QUEUE } from './pdf.processor.service';
@@ -8,6 +9,7 @@ import {
   NotFoundException,
   ForbiddenException,
   UnauthorizedException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { generateDownloadToken } from '../common/utils/file.util';
 import * as fs from 'fs/promises';
@@ -30,6 +32,10 @@ const mockStorage = {
   deleteFile: jest.fn(),
 };
 
+const mockGs = {
+  isAvailable: jest.fn().mockReturnValue(true),
+};
+
 const mockConfig = {
   get: jest.fn((key: string, fallback?: any) => {
     const map: Record<string, any> = {
@@ -46,6 +52,7 @@ describe('PdfService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockGs.isAvailable.mockReturnValue(true);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -53,6 +60,7 @@ describe('PdfService', () => {
         { provide: getQueueToken(PDF_QUEUE), useValue: mockQueue },
         { provide: StorageService, useValue: mockStorage },
         { provide: ConfigService, useValue: mockConfig },
+        { provide: GhostscriptService, useValue: mockGs },
       ],
     }).compile();
 
@@ -60,13 +68,12 @@ describe('PdfService', () => {
   });
 
   describe('enqueue()', () => {
-    it('harus berhasil enqueue file PDF dan return jobId + downloadToken', async () => {
-      const tmpDir = path.join(os.tmpdir(), 'test-job-123');
+    it('harus berhasil enqueue dan return jobId + downloadToken', async () => {
+      const tmpDir = path.join(os.tmpdir(), 'pdf-jobs', 'test-job-123');
       mockStorage.createJobDir.mockResolvedValue(tmpDir);
       mockQueue.add.mockResolvedValue({});
 
-      const buffer = Buffer.from('%PDF-1.4 test content');
-      const result = await service.enqueue(buffer, 'test.pdf');
+      const result = await service.enqueue(Buffer.from('%PDF-1.4 test content'), 'test.pdf');
 
       expect(result).toHaveProperty('jobId');
       expect(result).toHaveProperty('downloadToken');
@@ -84,6 +91,18 @@ describe('PdfService', () => {
       );
     });
 
+    it('harus throw ServiceUnavailableException jika Ghostscript tidak tersedia', async () => {
+      mockGs.isAvailable.mockReturnValue(false);
+
+      await expect(
+        service.enqueue(Buffer.from('%PDF-1.4'), 'file.pdf'),
+      ).rejects.toThrow(ServiceUnavailableException);
+
+      // Tidak boleh ada I/O yang terjadi
+      expect(mockStorage.createJobDir).not.toHaveBeenCalled();
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
+
     it('harus throw UnauthorizedException jika downloadTokenSecret tidak dikonfigurasi', async () => {
       const configWithoutSecret = {
         get: jest.fn().mockReturnValue(undefined),
@@ -95,6 +114,7 @@ describe('PdfService', () => {
           { provide: getQueueToken(PDF_QUEUE), useValue: mockQueue },
           { provide: StorageService, useValue: mockStorage },
           { provide: ConfigService, useValue: configWithoutSecret },
+          { provide: GhostscriptService, useValue: mockGs },
         ],
       }).compile();
 
@@ -105,23 +125,34 @@ describe('PdfService', () => {
     });
 
     it('downloadToken yang dihasilkan harus valid untuk jobId yang sama', async () => {
-      const tmpDir = '/tmp/pdf-jobs/test-id';
+      const tmpDir = path.join(os.tmpdir(), 'pdf-jobs', 'test-id');
       mockStorage.createJobDir.mockResolvedValue(tmpDir);
       mockQueue.add.mockResolvedValue({});
 
       const { jobId, downloadToken } = await service.enqueue(
-        Buffer.from('%PDF-1.4'),
-        'file.pdf',
+        Buffer.from('%PDF-1.4'), 'file.pdf',
       );
 
       const secret = 'test-secret-32-chars-xxxxxxxxxxxx';
       const expectedToken = generateDownloadToken(jobId, secret);
       expect(downloadToken).toBe(expectedToken);
     });
+
+    it('tidak boleh panggil queue.add jika writeFile gagal', async () => {
+      const tmpDir = path.join(os.tmpdir(), 'pdf-jobs', 'fail-job');
+      mockStorage.createJobDir.mockResolvedValue(tmpDir);
+      (fs.writeFile as jest.Mock).mockRejectedValueOnce(new Error('Disk full'));
+
+      await expect(
+        service.enqueue(Buffer.from('%PDF-1.4'), 'file.pdf'),
+      ).rejects.toThrow('Disk full');
+
+      expect(mockQueue.add).not.toHaveBeenCalled();
+    });
   });
 
   describe('getStatus()', () => {
-    it('harus return status job yang benar untuk job aktif', async () => {
+    it('harus return status job aktif dengan progress', async () => {
       const mockJob = {
         getState: jest.fn().mockResolvedValue('active'),
         progress: 45,
@@ -132,7 +163,6 @@ describe('PdfService', () => {
       mockQueue.getJob.mockResolvedValue(mockJob);
 
       const result = await service.getStatus('job-id-123');
-
       expect(result).toEqual({
         jobId: 'job-id-123',
         state: 'active',
@@ -143,7 +173,7 @@ describe('PdfService', () => {
       });
     });
 
-    it('harus return result ketika job selesai (completed)', async () => {
+    it('harus return result kompres saat job selesai (completed)', async () => {
       const returnvalue = {
         sizeBefore: 1_000_000,
         sizeAfter: 300_000,
@@ -160,19 +190,16 @@ describe('PdfService', () => {
       mockQueue.getJob.mockResolvedValue(mockJob);
 
       const result = await service.getStatus('job-id-123');
-
       expect(result.state).toBe('completed');
       expect(result.result).toEqual(returnvalue);
     });
 
     it('harus throw NotFoundException jika job tidak ditemukan', async () => {
       mockQueue.getJob.mockResolvedValue(null);
-      await expect(service.getStatus('tidak-ada')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(service.getStatus('tidak-ada')).rejects.toThrow(NotFoundException);
     });
 
-    it('harus return failedReason ketika job gagal', async () => {
+    it('harus return failedReason saat job gagal', async () => {
       const mockJob = {
         getState: jest.fn().mockResolvedValue('failed'),
         progress: 0,
@@ -192,10 +219,9 @@ describe('PdfService', () => {
     const jobId = 'job-download-test';
     const secret = 'test-secret-32-chars-xxxxxxxxxxxx';
 
-    it('harus return outputPath untuk token yang valid dan job selesai', async () => {
+    it('harus return outputPath untuk token valid dan job selesai', async () => {
       const token = generateDownloadToken(jobId, secret);
       const outputPath = `/tmp/pdf-jobs/${jobId}/compressed.pdf`;
-
       const mockJob = {
         getState: jest.fn().mockResolvedValue('completed'),
         returnvalue: { outputPath },
@@ -221,18 +247,14 @@ describe('PdfService', () => {
       };
       mockQueue.getJob.mockResolvedValue(mockJob);
 
-      await expect(service.getDownloadStream(jobId, token)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(service.getDownloadStream(jobId, token)).rejects.toThrow(NotFoundException);
     });
 
     it('harus throw NotFoundException jika job tidak ada', async () => {
       const token = generateDownloadToken(jobId, secret);
       mockQueue.getJob.mockResolvedValue(null);
 
-      await expect(service.getDownloadStream(jobId, token)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(service.getDownloadStream(jobId, token)).rejects.toThrow(NotFoundException);
     });
   });
 });
