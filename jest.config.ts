@@ -15,7 +15,7 @@ const config: Config = {
     // ✅ Fix: uuid v9+ dan beberapa package lain ship ESM-only di dist-node.
     // Petakan ke build CJS agar Jest (CommonJS) bisa require() mereka.
     moduleNameMapper: {
-        '^uuid$': '<rootDir>/node_modules/uuid/dist/cjs/index.js',
+        '^uuid$': '<rootDir>/node_modules/uuid/dist/index.js',
         '^src/(.*)$': '<rootDir>/src/$1',
     },
 
